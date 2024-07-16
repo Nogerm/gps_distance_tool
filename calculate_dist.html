@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>橋墩位置計算工具</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <style>
+        #map { height: 450px; width: 100%; margin-top: 20px; }
+        body { font-family: Arial, sans-serif; }
+        .form-group { margin-bottom: 1em; }
+        .drop-area {
+            padding: 20px;
+            text-align: center;
+            border: 2px dashed #cccccc;
+            margin-bottom: 20px;
+            cursor: pointer;
+        }
+        .row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+        .column {
+            flex: 1;
+            padding: 1rem;
+            border: 2px solid lightgray;
+            box-sizing: border-box;
+        }
+    </style>
+</head>
+<body>
+    <h1>橋墩位置計算工具</h1>
+    <div id="map"></div>
+    <div class="row">
+        <div class="column">
+            <h3>方式 1 : 照片解析 GPS</h3>
+            <div class="drop-area" id="drop-area" ondrop="handleDrop(event)" ondragover="allowDrop(event)">
+                將無人機照片拖曳至此，計算位置
+            </div>
+            <p id="exifResult"></p>
+        </div>
+        <div class="column">
+            <h3>方式 2 : 手動輸入 GPS</h3>
+            <form id="gpsForm">
+                <div class="form-group">
+                    <label for="latDeg">緯度 :</label>
+                    <input type="number" id="latDeg" placeholder="度" required>
+                    <input type="number" id="latMin" placeholder="分" required>
+                    <input type="number" id="latSec" placeholder="秒" step="any" required>
+                    <select id="latDir">
+                        <option value="N">N</option>
+                        <option value="S">S</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="lngDeg">經度 :</label>
+                    <input type="number" id="lngDeg" placeholder="度" required>
+                    <input type="number" id="lngMin" placeholder="分" required>
+                    <input type="number" id="lngSec" placeholder="秒" step="any" required>
+                    <select id="lngDir">
+                        <option value="E">E</option>
+                        <option value="W">W</option>
+                    </select>
+                </div>
+                <button type="button" onclick="calculateDistance()">計算最接近橋墩</button>
+            </form>
+        </div>
+    </div>
+    <p id="result"></p>
+
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/exif-js"></script>
+    <script>
+        // List of bridge coordinates and names
+        var bridges = [
+            { lat: 22.74145, lng: 120.31768, name: 'P49' },
+            { lat: 22.74146, lng: 120.31780, name: 'P50' },
+            { lat: 22.74174, lng: 120.31764, name: 'P51' },
+            { lat: 22.74175, lng: 120.31778, name: 'P52' },
+            { lat: 22.74221, lng: 120.31760, name: 'P53' },
+            { lat: 22.74221, lng: 120.31778, name: 'P54' },
+            { lat: 22.74267, lng: 120.31760, name: 'P55' },
+            { lat: 22.74267, lng: 120.31777, name: 'P56' },
+            { lat: 22.74312, lng: 120.31759, name: 'P57' },
+            { lat: 22.74312, lng: 120.31777, name: 'P58' },
+        ];
+
+        // Initialize the map at P56 location and zoom level 18
+        var map = L.map('map').setView([22.74312, 120.31777], 18);
+
+        var ckickMarker = {};
+        map.on('click',function(e){
+            lat = e.latlng.lat;
+            lon = e.latlng.lng;
+
+            console.log("You clicked the map at LAT: "+ lat+" and LONG: "+lon );
+                //Clear existing marker, 
+
+                if (ckickMarker != undefined) {
+                    map.removeLayer(ckickMarker);
+                };
+
+            //Add a marker to show where you clicked.
+            ckickMarker = L.marker([lat,lon])
+                .addTo(map)
+                .bindTooltip("緯度: "+ lat +"，經度: "+lon, {permanent: true, direction: 'top'})
+                .openTooltip();;  
+        });
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: 'Map data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+
+        // Add markers for bridges with labels
+        bridges.forEach(function(bridge) {
+            L.marker([bridge.lat, bridge.lng])
+                .addTo(map)
+                .bindTooltip(bridge.name, {permanent: true, direction: 'top'})
+                .openTooltip();
+        });
+
+        function convertDMSToDD(degrees, minutes, seconds, direction) {
+            var dd = parseFloat(degrees) + parseFloat(minutes) / 60 + parseFloat(seconds) / (60 * 60);
+            if (direction === "S" || direction === "W") {
+                dd = dd * -1;
+            }
+            return dd;
+        }
+
+        var photoMarker = {};
+        function calculateDistance() {
+            var latDeg = document.getElementById('latDeg').value;
+            var latMin = document.getElementById('latMin').value;
+            var latSec = document.getElementById('latSec').value;
+            var latDir = document.getElementById('latDir').value;
+
+            var lngDeg = document.getElementById('lngDeg').value;
+            var lngMin = document.getElementById('lngMin').value;
+            var lngSec = document.getElementById('lngSec').value;
+            var lngDir = document.getElementById('lngDir').value;
+
+            var latitude = convertDMSToDD(latDeg, latMin, latSec, latDir);
+            var longitude = convertDMSToDD(lngDeg, lngMin, lngSec, lngDir);
+            
+            var userLocation = { lat: latitude, lng: longitude };
+            photoMarker = L.marker([userLocation.lat, userLocation.lng])
+                .addTo(map)
+                .bindTooltip('Input point', {permanent: true, direction: 'top'})
+                .openTooltip();
+
+            var closestBridge = null;
+            var shortestDistance = Infinity;
+
+            bridges.forEach(function(bridge) {
+                var distance = map.distance([userLocation.lat, userLocation.lng], [bridge.lat, bridge.lng]);
+                if (distance < shortestDistance) {
+                    shortestDistance = distance;
+                    closestBridge = bridge;
+                }
+            });
+
+            document.getElementById('result').innerText = "最接近的橋墩: " + closestBridge.name + " (" + closestBridge.lat + ", " + closestBridge.lng + ") 距離: " + shortestDistance.toFixed(2) + " 公尺";
+        }
+
+        function calculateClosestBridgeAndDisplay(userLocation) {
+            var closestBridge = null;
+            var shortestDistance = Infinity;
+            bridges.forEach(function(bridge) {
+                var distance = map.distance([userLocation.lat, userLocation.lng], [bridge.lat, bridge.lng]);
+                if (distance < shortestDistance) {
+                    shortestDistance = distance;
+                    closestBridge = bridge;
+                }
+            });
+
+            // Display user location with default marker and label it
+            photoMarker = L.marker([userLocation.lat, userLocation.lng])
+                .addTo(map)
+                .bindTooltip('輸入的位置', {permanent: true, direction: 'top'})
+                .openTooltip();
+
+            document.getElementById('result').innerText = "最接近的橋墩: " + closestBridge.name + " (" + closestBridge.lat + ", " + closestBridge.lng + ") 距離: " + shortestDistance.toFixed(2) + " 公尺";
+        }
+
+        function allowDrop(event) {
+            event.preventDefault();
+        }
+
+        function handleDrop(event) {
+            event.preventDefault();
+            var file = event.dataTransfer.files[0];
+            if (file && file.type.match('image.\*')) {
+                var reader = new FileReader();
+                reader.onload = function(e) {
+                    var img = new Image();
+                    img.onload = function() {
+                        EXIF.getData(img, function() {
+                            var lat = EXIF.getTag(this, "GPSLatitude");
+                            var lng = EXIF.getTag(this, "GPSLongitude");
+                            var latRef = EXIF.getTag(this, "GPSLatitudeRef") || "N";
+                            var lngRef = EXIF.getTag(this, "GPSLongitudeRef") || "W";
+                            if (lat && lng) {
+                                var latitude = convertDMSToDD(lat[0], lat[1], lat[2], latRef);
+                                var longitude = convertDMSToDD(lng[0], lng[1], lng[2], lngRef);
+                                document.getElementById("latDeg").value = parseInt(lat[0], 10);
+                                document.getElementById("latMin").value = parseInt(lat[1], 10);
+                                document.getElementById("latSec").value = lat[2];
+                                document.getElementById("latDir").value = latRef;
+                                document.getElementById("lngDeg").value = parseInt(lng[0], 10);
+                                document.getElementById("lngMin").value = parseInt(lng[1], 10);
+                                document.getElementById("lngSec").value = lng[2];
+                                document.getElementById("lngDir").value = lngRef;
+                                document.getElementById('exifResult').innerText = `解析照片 GPS: 緯度 ${latitude}, 經度 ${longitude}`;
+
+                                var userLocation = { lat: latitude, lng: longitude };
+                                calculateClosestBridgeAndDisplay(userLocation);
+                            } else {
+                                document.getElementById('exifResult').innerText = "此照片未包含 GPS 資訊";
+                                document.getElementById('result').innerText = "";
+                                document.getElementById("latDeg").value = "";
+                                document.getElementById("latMin").value = "";
+                                document.getElementById("latSec").value = "";
+                                document.getElementById("lngDeg").value = "";
+                                document.getElementById("lngMin").value = "";
+                                document.getElementById("lngSec").value = "";
+                                if (map.hasLayer(photoMarker)) {
+                                    map.removeLayer(photoMarker);
+                                }
+                            }
+                        });
+                    };
+                    img.src = e.target.result;
+                }
+                reader.readAsDataURL(file);
+            } else {
+                alert('檔案格式錯誤，請選擇照片檔案');
+            }
+        }
+    </script>
+</body>
+</html>
